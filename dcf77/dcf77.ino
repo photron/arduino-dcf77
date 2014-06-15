@@ -23,80 +23,123 @@
  */
 
 const int signalPin = 2;
-const int sampleInterval = 10; // milliseconds
 const int ledPin = 13;
+const int samplingInterval = 10; // milliseconds
 
-int secondIndex = -1;
-byte bits[59]; // being lazy
-int lastValue;
-unsigned long lowStart = 0;
-unsigned long highStart = 0;
-int ledState = LOW;
+byte lastSampleValue;
+unsigned long lastSampleTime;
+unsigned long lastFlankTime;
+int bitIndex = -1; // -1 means waiting for the next minute start
+byte bits[59]; // being lazy, using bytes as bits
+int newError = -1; // -1 means no error
+boolean newMinute = false;
+boolean newSecond = false;
+boolean newData = false;
+byte ledState = LOW;
 
-int readSignalPin() {
+byte readSignalPin() {
   // the DCF77 module provides the signal inverted
   return digitalRead(signalPin) == LOW ? HIGH : LOW;
 }
 
-boolean sampleSignal() {
-  boolean result = false;
-  int value = readSignalPin();
-
-  if (lastValue == HIGH) {
-    if (value == LOW) { // new second starts
-      Serial.println("new second starts");
-      unsigned long time = millis(); // FIXME: need to handle overflow
-
-      lowStart = time;
-
-      if (highStart > 0) {
-        unsigned long highDuration = time - highStart;
-
-        if (highDuration > 1500) { // new minute starts
-          Serial.println("new minute starts");
-          secondIndex = 0;
-        }
-      }
-
-      if (ledState == LOW) {
-        ledState = HIGH;
-      } else {
-        ledState = LOW;
-      }
-
-      digitalWrite(ledPin, ledState);
-    }
+boolean checkPulseDuration(byte value, unsigned long duration, boolean maximumOnly) {
+  if (value == LOW) { // LOW pulse
+    // should be 100ms or 200ms long
+    return (maximumOnly || duration > 50) && duration < 250;
   }
-  else { // lastValue == LOW
-    if (value == HIGH) {
-      unsigned long time = millis(); // FIXME: need to handle overflow
+  else { // HIGH pulse
+    // should be 800ms, 900ms or 1800ms or 1900ms long
+    return ((maximumOnly || duration > 750) && duration < 950) ||
+           ((maximumOnly || duration > 1750) && duration < 1950);
+  }
+}
 
-      highStart = time;
+void sampleSignal() {
+  byte currentValue = readSignalPin();
+  unsigned long currentTime = millis();
 
-      if (lowStart > 0 && secondIndex >= 0 && secondIndex <= 58) {
-        unsigned long lowDuration = time - lowStart;
+  newError = -1;
+  newMinute = false;
+  newSecond = false;
+  newData = false;
 
-        if (lowDuration < 150) { // bit is 0
-          Serial.println("bit is 0");
-          bits[secondIndex] = 0;
-        }
-        else { // bit is 1
-          Serial.println("bit is 1");
-          bits[secondIndex] = 1;
-        }
+  if (lastSampleTime > currentTime) { // timer overflowed, just start over
+    lastSampleValue = currentValue;
+    lastSampleTime = currentTime;
+    lastFlankTime = currentTime;
+    bitIndex = -1;
 
-        ++secondIndex;
-
-        if (secondIndex == 59) {
-          result = true;
-        }
-      }
-    }
+    return;
   }
 
-  lastValue = value;
+  if (lastSampleValue == currentValue) { // signal didn't change
+    lastSampleTime = currentTime;
 
-  return result;
+    if (!checkPulseDuration(currentValue, currentTime - lastFlankTime, true)) {
+      // signal has invalid pulse duration, just start over
+      bitIndex = -1;
+      newError = 0;
+    }
+
+    return;
+  }
+
+  unsigned long pulseDuration = currentTime - lastFlankTime;
+  byte pulseValue = lastSampleValue;
+
+  lastSampleValue = currentValue;
+  lastSampleTime = currentTime;
+  lastFlankTime = currentTime;
+
+  if (!checkPulseDuration(pulseValue, pulseDuration, false)) {
+    // signal has invalid pulse duration, just start over
+    bitIndex = -1;
+    newError = 1;
+
+    return;
+  }
+
+  if (pulseValue == HIGH) { // HIGH -> LOW: new second starts
+    newSecond = true;
+
+    if (pulseDuration > 1750) { // missing second start, new minute starts
+      if (bitIndex != -1) { // new minute starts unexpected, just start over
+        bitIndex = -1;
+        newError = 2;
+
+        return;
+      }
+
+      newMinute = true;
+      bitIndex = 0;
+    }
+  }
+  else { // LOW -> HIGH: bit ends
+    if (bitIndex < 0) { // didn't see minute start yet
+      return;
+    }
+
+    if (bitIndex > 58) { // too many bits, missed minute start? just start over
+      bitIndex = -1;
+      newError = 3;
+
+      return;
+    }
+
+    if (pulseDuration < 150) { // 50 <= pulseDuration < 150 --> bit is 0
+      bits[bitIndex] = 0;
+    }
+    else { // 150 <= pulseDuration < 250 --> bit is 1
+      bits[bitIndex] = 1;
+    }
+
+    ++bitIndex;
+
+    if (bitIndex == 59) { // got a complete minute of bits
+      bitIndex = -1;
+      newData = true;
+    }
+  }
 }
 
 boolean checkEvenParity(int from, int to) { // assumes bits array is fully populated
@@ -122,15 +165,46 @@ void setup() {
   Serial.println("setup");
 
   pinMode(ledPin, OUTPUT);
+  digitalWrite(ledPin, HIGH);
 
-  lastValue = readSignalPin();
+  lastSampleValue = readSignalPin();
+  lastSampleTime = lastFlankTime = millis();
 }
 
 void loop() {
-  delay(sampleInterval); // FIXME: need to account for the actual time it takes to do the sampling
+  delay(samplingInterval); // FIXME: need to account for the actual time it takes to do the sampling
 
-  if (sampleSignal()) {
-    Serial.print("full: ");
+  sampleSignal();
+
+  if (newError != -1) {
+    Serial.print("error: ");
+    Serial.println(newError);
+
+    digitalWrite(ledPin, HIGH);
+
+    return;
+  }
+
+  if (newMinute) {
+    Serial.println("minute");
+  }
+
+  if (newSecond) {
+    Serial.print("second: ");
+    Serial.println(bitIndex);
+
+    if (ledState == LOW) {
+      ledState = HIGH;
+    }
+    else {
+      ledState = LOW;
+    }
+
+    digitalWrite(ledPin, ledState);
+  }
+
+  if (newData) {
+    Serial.print("bits: ");
 
     for (int i = 0; i < 59; ++i) {
       Serial.print(bits[i]);
