@@ -1,7 +1,7 @@
 /*
  * A simple DCF77 decoder for Arduino
  *
- * Copyright (c) 2013-2013 Matthias Bolte
+ * Copyright (c) 2013-2014 Matthias Bolte
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -98,6 +98,24 @@ boolean sampleSignal() {
   return result;
 }
 
+boolean checkEvenParity(int from, int to) { // assumes bits array is fully populated
+  int sum = 0;
+
+  for (int i = from; i < to + 1; ++i) {
+    sum += bits[i];
+  }
+
+  return sum % 2 == 0;
+}
+
+boolean checkBits() { // assumes bits array is fully populated
+  if (bits[0] != 0) { // bit 0 is always 0
+    return false;
+  }
+
+  return checkEvenParity(21, 28) && checkEvenParity(29, 35) && checkEvenParity(36, 58);
+}
+
 void setup() {
   Serial.begin(115200);
   Serial.println("setup");
@@ -120,11 +138,19 @@ void loop() {
 
     Serial.println("");
 
+    if (!checkBits()) {
+      Serial.print("error: invalid bits");
+
+      return;
+    }
+
     int day = bits[41] * 20 + bits[40] * 10 + bits[39] * 8 + bits[38] * 4 + bits[37] * 2 + bits[36] * 1;
     int month = bits[49] * 10 + bits[48] * 8 + bits[47] * 4 + bits[46] * 2 + bits[45] * 1;
     int year = bits[57] * 80 + bits[56] * 40 + bits[55] * 20 + bits[54] * 10 + bits[53] * 8 + bits[52] * 4 + bits[51] * 2 + bits[50] * 1;
     int hour = bits[34] * 20 + bits[33] * 10 + bits[32] * 8 + bits[31] * 4 + bits[30] * 2 + bits[29] * 1;
     int minute = bits[27] * 40 + bits[26] * 20 + bits[25] * 10 + bits[24] * 8 + bits[23] * 4 + bits[22] * 2 + bits[21] * 1;
+
+    Serial.print("time: ");
 
     Serial.print(day);
     Serial.print(".");
