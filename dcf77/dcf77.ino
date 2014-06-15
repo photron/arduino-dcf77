@@ -22,7 +22,7 @@
  * THE SOFTWARE.
  */
 
-const int signalPin = 0;
+const int signalPin = 2;
 const int sampleInterval = 10; // milliseconds
 const int ledPin = 13;
 
@@ -34,7 +34,8 @@ unsigned long highStart = 0;
 int ledState = LOW;
 
 int readSignalPin() {
-  return analogRead(signalPin) > 400 ? LOW : HIGH;
+  // the DCF77 module provides the signal inverted
+  return digitalRead(signalPin) == LOW ? HIGH : LOW;
 }
 
 boolean sampleSignal() {
