@@ -133,12 +133,30 @@ void DCF77::sampleSignal() {
   if (pulseValue == HIGH) { // HIGH -> LOW: new second starts
     _hasNewSecond = true;
 
+    if (_second >= 0) { // found a minute mark before, increase second counter
+      ++_second;
+    }
+
     if (pulseDuration > 1750) { // missing second start, new minute starts
-      if (_second != -1) { // new minute starts unexpected, just start over
+      if (_second != -1 && _second != 59) { // new minute starts unexpected, just start over
         _second = -1;
         _lastError = UnexpectedMinuteStart;
 
         return;
+      }
+
+      if (_second == 59) { // got a complete minute of bits
+        if (!checkBits()) {
+          _lastError = ChecksumMismatch;
+        }
+        else {
+          _year = 2000 + _bits[57] * 80 + _bits[56] * 40 + _bits[55] * 20 + _bits[54] * 10 + _bits[53] * 8 + _bits[52] * 4 + _bits[51] * 2 + _bits[50] * 1;
+          _month = _bits[49] * 10 + _bits[48] * 8 + _bits[47] * 4 + _bits[46] * 2 + _bits[45] * 1;
+          _day = _bits[41] * 20 + _bits[40] * 10 + _bits[39] * 8 + _bits[38] * 4 + _bits[37] * 2 + _bits[36] * 1;
+          _hour = _bits[34] * 20 + _bits[33] * 10 + _bits[32] * 8 + _bits[31] * 4 + _bits[30] * 2 + _bits[29] * 1;
+          _minute = _bits[27] * 40 + _bits[26] * 20 + _bits[25] * 10 + _bits[24] * 8 + _bits[23] * 4 + _bits[22] * 2 + _bits[21] * 1;
+          _hasNewData = true;
+        }
       }
 
       _hasNewMinute = true;
@@ -162,24 +180,6 @@ void DCF77::sampleSignal() {
     }
     else { // 150 <= pulseDuration < 250 --> bit is 1
       _bits[_second] = 1;
-    }
-
-    ++_second;
-
-    if (_second == 59) { // got a complete minute of bits
-      _second = -1;
-
-      if (!checkBits()) {
-        _lastError = ChecksumMismatch;
-      }
-      else {
-        _year = 2000 + _bits[57] * 80 + _bits[56] * 40 + _bits[55] * 20 + _bits[54] * 10 + _bits[53] * 8 + _bits[52] * 4 + _bits[51] * 2 + _bits[50] * 1;
-        _month = _bits[49] * 10 + _bits[48] * 8 + _bits[47] * 4 + _bits[46] * 2 + _bits[45] * 1;
-        _day = _bits[41] * 20 + _bits[40] * 10 + _bits[39] * 8 + _bits[38] * 4 + _bits[37] * 2 + _bits[36] * 1;
-        _hour = _bits[34] * 20 + _bits[33] * 10 + _bits[32] * 8 + _bits[31] * 4 + _bits[30] * 2 + _bits[29] * 1;
-        _minute = _bits[27] * 40 + _bits[26] * 20 + _bits[25] * 10 + _bits[24] * 8 + _bits[23] * 4 + _bits[22] * 2 + _bits[21] * 1;
-        _hasNewData = true;
-      }
     }
   }
 }
